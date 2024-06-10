@@ -2,9 +2,9 @@ use pyo3::prelude::*;
 use pyo3::types::IntoPyDict;
 
 const USAGE: &str = r#"
-map - Execute a Python expression on each line from STDIN
+map - Print lines from STDIN using a string Python expression
 Usage: map <py expr>
-Example: ps | '_.upper()'
+Example: ps | map '_.upper()'
 "#;
 
 fn main() -> PyResult<()>
@@ -17,7 +17,8 @@ fn main() -> PyResult<()>
                 let locals = [("_", line)].into_py_dict_bound(py);
                 let result =
                     py.eval_bound(&format!("str({cmd})"), None, Some(&locals))?;
-                println!("{result}");
+                let str_expr: String = result.extract()?;
+                println!("{str_expr}");
             }
             Ok(())
         }),
