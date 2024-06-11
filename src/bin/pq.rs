@@ -151,57 +151,6 @@ fn parse_queries(input: &str) -> Result<Vec<Query>, PqError>
     Ok(queries)
 }
 
-fn process_queries(
-    json: serde_json::Value,
-    queries: Vec<Query>,
-) -> Result<(), PqError>
-{
-    let mut json_state = json;
-
-    for query in queries
-    {
-        match query
-        {
-            Query::SelectKey { key } =>
-            {
-                json_state = json_state[key].clone();
-            }
-            Query::Index { query } =>
-            {
-                let key = if query < 0
-                {
-                    json_state.as_array().unwrap().len() as isize + query
-                }
-                else
-                {
-                    query
-                } as usize;
-                json_state = json_state[key].clone();
-            }
-            Query::BuildObject { query } => todo!(),
-            Query::Expression { query } => Python::with_gil::<
-                _,
-                Result<(), PqError>,
-            >(|py| {
-                let line = "";
-                let locals = [("_", line)].into_py_dict_bound(py);
-                let result =
-                    py.eval_bound(&format!("{query}"), None, Some(&locals))?;
-                let str_expr: String = result.extract()?;
-                println!("{str_expr}");
-                Ok(())
-            })?,
-            Query::Fanout => todo!(),
-            Query::Join => todo!(),
-            Query::Select => todo!(),
-        }
-    }
-
-    println!("{}", json_state);
-
-    Ok(())
-}
-
 fn expect_select_key(
     chars: &Vec<char>,
     index: usize,
@@ -276,7 +225,6 @@ fn expect_expression(
     index: usize,
 ) -> Result<(Query, usize), PqError>
 {
-    let _python_source = "(print('Hello world')).a.()";
     let python_source: &String = &chars[index ..].into_iter().collect();
 
     // let python_statements = ast::Suite::parse(python_source, "").unwrap(); // statements
@@ -284,22 +232,26 @@ fn expect_expression(
 
     println!("{RED}{python_source}{RESET}");
 
-    let mut index = 0;
+    let mut start = 0;
     let mut valid_index: Option<usize> = None;
-    while index < python_source.len()
+    while start < python_source.len()
     {
-        println!("{RED} -> {index} {} {RESET}", &python_source[..= index]);
-        if ast::Expr::parse(&python_source[..= index], "").is_ok()
+        println!("{RED} -> {start} {} {RESET}", &python_source[..= start]);
+        if ast::Expr::parse(&python_source[..= start], "").is_ok()
         {
-            valid_index = Some(index);
+            valid_index = Some(start);
             break;
         }
-        index += 1
+        start += 1
     }
 
     if let Some(end_index) = valid_index
     {
-        println!("{}", &python_source[0 ..= end_index]);
+        println!(
+            "{} | INDEX: {}",
+            &python_source[0 ..= end_index],
+            start + end_index
+        );
         let query = python_source[0 ..= end_index].to_string();
         return Ok((Query::Expression { query }, index + end_index));
     }
@@ -320,30 +272,113 @@ fn accept_select(chars: &Vec<char>, index: usize) -> bool
     false
 }
 
-use pyo3::prelude::*;
-use pyo3::types::PyDict;
-use serde_json::{Map, Value};
+// use pyo3::prelude::*;
+// use pyo3::types::{PyDict, PyNone};
+// use pyo3::*;
+// use serde_json::{Map, Value};
 
-fn value_to_py_dict<'a>(py: Python<'a>, value: &Value) -> PyResult<&'a PyDict>
+// fn value_to_py_dict<'a>(
+//     py: Python<'a>,
+//     value: &Value,
+// ) -> PyResult<Bound<'a, PyAny>>
+// {
+//     let dict = PyDict::new_bound(py);
+
+//     // TODO(alvl): Just convert the value to string and parse it w/Python lol
+
+//     let none: Bound<'a, PyAny> =
+//         py.eval_bound(&format!("None"), None, None)?.extract()?;
+
+//     // [("_", line)].into_py_dict_bound(py);
+
+//     if let Value::Object(map) = value
+//     {
+//         for (key, value) in map.iter()
+//         {
+//             let py_val: Bound<'a, PyAny> = match value
+//             {
+//                 Value::Null => none,
+//                 Value::Bool(_) => todo!(),
+//                 Value::Number(_) => todo!(),
+//                 Value::String(_) => todo!(),
+//                 Value::Array(_) => todo!(),
+//                 Value::Object(_) => value_to_py_dict(py, value)?,
+//             };
+//         }
+//     }
+//     Ok(dict)
+// }
+
+fn process_queries(
+    json: serde_json::Value,
+    queries: Vec<Query>,
+) -> Result<(), PqError>
 {
-    let dict = PyDict::new_bound(py);
+    let mut json_state = json;
 
-    match value
+    for query in queries
     {
-        Value::Object(map) =>
+        match query
         {
-            for (key, value) in map.iter()
+            Query::SelectKey { key } =>
             {
-                dict.set_item(key, value_to_py(py, value)?)?;
+                json_state = json_state[key].clone();
             }
-        }
-        _ =>
-        {
-            return Err(pyo3::exceptions::PyTypeError::new_err(
-                "Value must be a JSON object",
-            ))
+            Query::Index { query } =>
+            {
+                let key = if query < 0
+                {
+                    json_state.as_array().unwrap().len() as isize + query
+                }
+                else
+                {
+                    query
+                } as usize;
+                json_state = json_state[key].clone();
+            }
+            Query::BuildObject { query } => todo!(),
+            Query::Expression { query } =>
+            {
+                Python::with_gil::<_, Result<(), PqError>>(|py| {
+                    println!(
+                        "{RED}{}{RESET}",
+                        format!("(_ := {json_state});{query}")
+                    );
+
+                    let locals = [("json", py.import_bound("json")?)]
+                        .into_py_dict_bound(py);
+
+                    let result = py
+                        .eval_bound(
+                            &format!("(_ := {json_state})"),
+                            None,
+                            Some(&locals),
+                        )
+                        .and(py.eval_bound(
+                            &format!("json.dumps{query}"),
+                            None,
+                            Some(&locals),
+                        ));
+
+                    // let result = py.eval_bound(
+                    //     &format!("(_ := {json_state});{query}"),
+                    //     None,
+                    //     None,
+                    // );
+                    println!("HERE -> {result:?}");
+                    let result = result?;
+                    let str_expr: String = result.extract()?;
+                    println!("{str_expr}");
+                    Ok(())
+                })?
+            }
+            Query::Fanout => todo!(),
+            Query::Join => todo!(),
+            Query::Select => todo!(),
         }
     }
 
-    Ok(dict)
+    println!("{}", json_state);
+
+    Ok(())
 }
