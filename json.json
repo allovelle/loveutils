@@ -1,3 +1,4 @@
 {
-    "name": "allovelle"
+    "name": "allovelle",
+    "things": [0, 1, 2, 3]
 }

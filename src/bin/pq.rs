@@ -104,6 +104,7 @@ fn parse_queries(input: &str) -> Result<Vec<Query>, PqError>
     {
         match chars[index]
         {
+            '.' => index += 1,
             '{' => index += 1,
             '(' => index += 1,
             '[' =>
@@ -162,11 +163,19 @@ fn process_queries(
     {
         match query
         {
-            Query::SelectKey { key } =>
+            Query::SelectKey { key } => json_state = json_state[key].clone(),
+            Query::Index { query } =>
             {
-                json_state = json_state[key].clone();
+                let key = if query < 0
+                {
+                    json_state.as_array().unwrap().len() as isize + query
+                }
+                else
+                {
+                    query
+                } as usize;
+                json_state = json_state[key].clone()
             }
-            Query::Index { query } => todo!(),
             Query::BuildObject { query } => todo!(),
             Query::Expression { query } => todo!(),
             Query::Fanout => todo!(),
@@ -222,8 +231,23 @@ fn expect_index(
         if let Some(num) = caps.get(2)
         {
             let number: isize = num.as_str().parse().or(Err(PqError::Query))?;
-            let negative =
-                -caps.get(1).map(|g| g.as_str().len() as isize).unwrap_or(-1);
+            // let negative =
+            //     -caps.get(1).map(|g| g.as_str().len() as isize).unwrap_or(-1);
+            let negative = if let Some(cap) = caps.get(1)
+            {
+                if cap.as_str().is_empty()
+                {
+                    1
+                }
+                else
+                {
+                    -1
+                }
+            }
+            else
+            {
+                1
+            };
 
             println!("{YELLOW}{:?}{RESET}", re.shortest_match(input));
 
