@@ -72,7 +72,7 @@ fn exe_expr2()
 #[derive(Debug)]
 enum Query
 {
-    SelectKey { query: String, },
+    SelectKey { key: String, },
     Index { query: isize, },
     BuildObject { query: String, },
     Expression { query: String, },
@@ -93,21 +93,20 @@ fn run_queries(input: &str) -> Result<(), PqError>
 
     while index < chars.len()
     {
-        if last_index == index
-        {
-            panic!("{RED}Infinite loop!{RESET}");
-        }
-
         match chars[index]
         {
             '{' => index += 1,
             '(' => index += 1,
             '[' => index += 1,
-            'a' ..= 'z' | 'A' ..= 'Z' =>
+            'a' ..= 'z' | 'A' ..= 'Z' | '_' =>
             {
                 if let Ok((query, end_index)) = expect_select_key(&chars, index)
                 {
                     queries.push(query);
+                    if end_index == index
+                    {
+                        panic!("{RED}Infinite loop!{RESET}");
+                    }
                     index += end_index;
                 }
                 else
@@ -116,6 +115,11 @@ fn run_queries(input: &str) -> Result<(), PqError>
                 }
             }
             _ => panic!("Invalid syntax:\n{input}\n{}^", " ".repeat(index)),
+        }
+
+        if last_index == index
+        {
+            panic!("{RED}Infinite loop!{RESET}");
         }
 
         last_index = index;
@@ -129,7 +133,20 @@ fn run_queries(input: &str) -> Result<(), PqError>
 fn expect_select_key(
     chars: &Vec<char>,
     index: usize,
-) -> Result<(Query, usize), ()>
+) -> Result<(Query, usize), PqError>
 {
-    Ok((Query::SelectKey { query: String::from("") }, index))
+    if chars[index].is_numeric()
+    {
+        return Err(PqError::Query);
+    }
+
+    let mut end = index;
+    while end < chars.len()
+        && (chars[end].is_alphanumeric() || chars[end] == '_')
+    {
+        end += 1;
+    }
+
+    let key: String = chars[index .. end].into_iter().collect();
+    Ok((Query::SelectKey { key }, end))
 }
