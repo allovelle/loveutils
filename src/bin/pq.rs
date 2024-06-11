@@ -1,3 +1,5 @@
+use std::os::unix::process;
+
 use rustpython_parser::{ast, Parse};
 
 const USAGE: &str = r#"
@@ -37,9 +39,16 @@ fn main() -> Result<(), PqError>
 
     match std::env::args().skip(1).next()
     {
-        Some(query) => run_queries(&query).map_err(|_| PqError::Query),
-        _ => Ok(println!("{}", USAGE.trim())),
+        Some(query) =>
+        {
+            let queries = parse_queries(&query).map_err(|_| PqError::Query)?;
+            println!("{queries:?}");
+            process_queries(json, queries)?;
+        }
+        _ => println!("{}", USAGE.trim()),
     }
+
+    Ok(())
 }
 
 fn exe_expr2()
@@ -81,7 +90,7 @@ enum Query
     Select,
 }
 
-fn run_queries(input: &str) -> Result<(), PqError>
+fn parse_queries(input: &str) -> Result<Vec<Query>, PqError>
 {
     println!("{RED}{input}{RESET}");
 
@@ -125,7 +134,34 @@ fn run_queries(input: &str) -> Result<(), PqError>
         last_index = index;
     }
 
-    println!("{queries:?}");
+    Ok(queries)
+}
+
+fn process_queries(
+    json: serde_json::Value,
+    queries: Vec<Query>,
+) -> Result<(), PqError>
+{
+    let mut json_state = json;
+
+    for query in queries
+    {
+        match query
+        {
+            Query::SelectKey { key } =>
+            {
+                json_state = json_state[key].clone();
+            }
+            Query::Index { query } => todo!(),
+            Query::BuildObject { query } => todo!(),
+            Query::Expression { query } => todo!(),
+            Query::Fanout => todo!(),
+            Query::Join => todo!(),
+            Query::Select => todo!(),
+        }
+    }
+
+    println!("{}", json_state);
 
     Ok(())
 }
