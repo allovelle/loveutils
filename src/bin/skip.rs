@@ -8,7 +8,7 @@ Example: ps | skip 1
 
 fn main()
 {
-    match std::env::args().take(2).skip(1).next().map(|s| s.parse())
+    match std::env::args().skip(1).next().map(|s| s.parse())
     {
         Some(Ok(arg)) =>
         {

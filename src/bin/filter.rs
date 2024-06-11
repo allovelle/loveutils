@@ -9,7 +9,7 @@ Example: git -h | filter 'int(_) > 77'
 
 fn main() -> PyResult<()>
 {
-    match std::env::args().take(2).skip(1).next()
+    match std::env::args().skip(1).next()
     {
         Some(cmd) => Python::with_gil(|py| {
             for line in std::io::stdin().lines().flatten()
