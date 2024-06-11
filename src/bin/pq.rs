@@ -1,6 +1,6 @@
-use std::os::unix::process;
-
+use regex::Regex;
 use rustpython_parser::{ast, Parse};
+use std::os::unix::process;
 
 const USAGE: &str = r#"
 pq - Query JSON using a DSL that embeds Python expressions
@@ -94,7 +94,7 @@ fn parse_queries(input: &str) -> Result<Vec<Query>, PqError>
 {
     println!("{RED}{input}{RESET}");
 
-    let chars: Vec<char> = input.chars().collect();
+    let chars: Vec<char> = input.trim().chars().collect();
     let mut index = 0;
     let mut queries = vec![];
 
@@ -106,7 +106,22 @@ fn parse_queries(input: &str) -> Result<Vec<Query>, PqError>
         {
             '{' => index += 1,
             '(' => index += 1,
-            '[' => index += 1,
+            '[' =>
+            {
+                if accept_index(&chars, 0)
+                {
+                    if let Ok((query, end_index)) = expect_index(&chars, index)
+                    {
+                        queries.push(query);
+                        if end_index == index
+                        {
+                            panic!("{RED}Infinite loop!{RESET}");
+                        }
+                        index += end_index;
+                    }
+                }
+                return Ok(vec![]);
+            }
             'a' ..= 'z' | 'A' ..= 'Z' | '_' =>
             {
                 if let Ok((query, end_index)) = expect_select_key(&chars, index)
@@ -185,4 +200,70 @@ fn expect_select_key(
 
     let key: String = chars[index .. end].into_iter().collect();
     Ok((Query::SelectKey { key }, end))
+}
+
+fn accept_index(chars: &Vec<char>, index: usize) -> bool
+{
+    let input: String = chars[index ..].into_iter().collect();
+    let re = Regex::new(r"\[\s*(-?)\s*(\d+)\s*\]").unwrap();
+    let Some(caps) = re.captures(&input)
+    else
+    {
+        println!("no match!");
+        return false;
+    };
+    // println!("The name is: {}", &caps["name"]);
+    println!("{:?}", caps);
+    println!("Negative?: {:?}", caps.get(1));
+    println!("Number: {:?}", caps.get(2));
+    true
+}
+
+fn expect_index(
+    chars: &Vec<char>,
+    index: usize,
+) -> Result<(Query, usize), PqError>
+{
+    let input: String = chars[index ..].into_iter().collect();
+    let re = Regex::new(r"\[\s*(-?)\s*(\d+)\s*\]").unwrap();
+    let Some(caps) = re.captures(&input)
+    else
+    {
+        println!("no match!");
+        return Err(PqError::Query);
+    };
+
+    let negative: isize = if let Some(mat) = caps.get(1)
+    {
+        if !mat.as_str().is_empty()
+        {
+            -1
+        }
+        else
+        {
+            1
+        }
+    }
+    else
+    {
+        1
+    };
+
+    let mut number: isize = caps.get(2).unwrap().as_str().parse().unwrap();
+    number *= negative;
+
+    Ok((Query::Index { query: number }, 0))
+}
+
+fn accept_fanout(chars: &Vec<char>, index: usize) -> bool
+{
+    false
+}
+fn accept_join(chars: &Vec<char>, index: usize) -> bool
+{
+    false
+}
+fn accept_select(chars: &Vec<char>, index: usize) -> bool
+{
+    false
 }
