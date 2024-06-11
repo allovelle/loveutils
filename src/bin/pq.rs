@@ -41,8 +41,8 @@ fn main() -> Result<(), PqError>
     {
         Some(query) =>
         {
-            let queries = parse_queries(&query).map_err(|_| PqError::Query)?;
-            println!("{queries:?}");
+            let queries = parse_queries(&query).or(Err(PqError::Query))?;
+            println!("{GREEN}{queries:?}{RESET}");
             process_queries(json, queries)?;
         }
         _ => println!("{}", USAGE.trim()),
@@ -120,7 +120,6 @@ fn parse_queries(input: &str) -> Result<Vec<Query>, PqError>
                         index += end_index;
                     }
                 }
-                return Ok(vec![]);
             }
             'a' ..= 'z' | 'A' ..= 'Z' | '_' =>
             {
@@ -206,17 +205,7 @@ fn accept_index(chars: &Vec<char>, index: usize) -> bool
 {
     let input: String = chars[index ..].into_iter().collect();
     let re = Regex::new(r"\[\s*(-?)\s*(\d+)\s*\]").unwrap();
-    let Some(caps) = re.captures(&input)
-    else
-    {
-        println!("no match!");
-        return false;
-    };
-    // println!("The name is: {}", &caps["name"]);
-    println!("{:?}", caps);
-    println!("Negative?: {:?}", caps.get(1));
-    println!("Number: {:?}", caps.get(2));
-    true
+    re.is_match(&input)
 }
 
 fn expect_index(
@@ -224,35 +213,25 @@ fn expect_index(
     index: usize,
 ) -> Result<(Query, usize), PqError>
 {
-    let input: String = chars[index ..].into_iter().collect();
-    let re = Regex::new(r"\[\s*(-?)\s*(\d+)\s*\]").unwrap();
-    let Some(caps) = re.captures(&input)
-    else
-    {
-        println!("no match!");
-        return Err(PqError::Query);
-    };
+    let input: &String = &chars[index ..].into_iter().collect();
+    let re = Regex::new(r"\[\s*(-?)\s*(\d+)\s*\]").or(Err(PqError::Query))?;
 
-    let negative: isize = if let Some(mat) = caps.get(1)
+    if let (Some(caps), Some(end_index)) =
+        (re.captures(input), re.shortest_match(input))
     {
-        if !mat.as_str().is_empty()
+        if let Some(num) = caps.get(2)
         {
-            -1
-        }
-        else
-        {
-            1
+            let number: isize = num.as_str().parse().or(Err(PqError::Query))?;
+            let negative =
+                -caps.get(1).map(|g| g.as_str().len() as isize).unwrap_or(-1);
+
+            println!("{YELLOW}{:?}{RESET}", re.shortest_match(input));
+
+            return Ok((Query::Index { query: number * negative }, end_index));
         }
     }
-    else
-    {
-        1
-    };
 
-    let mut number: isize = caps.get(2).unwrap().as_str().parse().unwrap();
-    number *= negative;
-
-    Ok((Query::Index { query: number }, 0))
+    Err(PqError::Query)
 }
 
 fn accept_fanout(chars: &Vec<char>, index: usize) -> bool
