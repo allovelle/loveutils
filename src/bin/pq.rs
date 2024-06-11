@@ -3,6 +3,8 @@ use pyo3::types::IntoPyDict;
 use regex::Regex;
 use rustpython_parser::{ast, Parse};
 
+type ConsumedChars = usize;
+
 const USAGE: &str = r#"
 pq - Query JSON using a DSL that embeds Python expressions
 Usage: pq <expr>
@@ -93,49 +95,50 @@ fn parse_queries(input: &str) -> Result<Vec<Query>, PqError>
             '{' => index += 1,
             '(' =>
             {
-                let Ok((query, end_index)) = expect_expression(&chars, index)
+                println!("    EXPR");
+                let Ok((query, consumed)) = expect_expression(&chars, index)
                 else
                 {
                     return Err(PqError::Query);
                 };
                 queries.push(query);
-                if end_index <= index
+                if consumed <= 0
                 {
                     panic!("{RED}Infinite loop!{RESET}");
                 }
-                index += end_index;
+                index += consumed;
             }
             '[' =>
             {
                 if accept_index(&chars, 0)
                 {
-                    let Ok((query, end_index)) = expect_index(&chars, index)
+                    let Ok((query, consumed)) = expect_index(&chars, index)
                     else
                     {
                         return Err(PqError::Query);
                     };
                     queries.push(query);
-                    if end_index <= index
+                    if consumed <= 0
                     {
                         panic!("{RED}Infinite loop!{RESET}");
                     }
-                    index += end_index;
+                    index += consumed;
                 }
                 // TODO(alvl): else if accept...
             }
             'a' ..= 'z' | 'A' ..= 'Z' | '_' =>
             {
-                let Ok((query, end_index)) = expect_select_key(&chars, index)
+                let Ok((query, consumed)) = expect_select_key(&chars, index)
                 else
                 {
                     return Err(PqError::Query);
                 };
                 queries.push(query);
-                if end_index <= index
+                if consumed <= 0
                 {
                     panic!("{RED}Infinite loop!{RESET}");
                 }
-                index += end_index;
+                index += consumed;
             }
             _ => panic!("Invalid syntax:\n{input}\n{}^", " ".repeat(index)),
         }
@@ -154,7 +157,7 @@ fn parse_queries(input: &str) -> Result<Vec<Query>, PqError>
 fn expect_select_key(
     chars: &Vec<char>,
     index: usize,
-) -> Result<(Query, usize), PqError>
+) -> Result<(Query, ConsumedChars), PqError>
 {
     if chars[index].is_numeric()
     {
@@ -169,7 +172,8 @@ fn expect_select_key(
     }
 
     let key: String = chars[index .. end].into_iter().collect();
-    Ok((Query::SelectKey { key }, end))
+    let consumed = end - index;
+    Ok((Query::SelectKey { key }, consumed))
 }
 
 fn accept_index(chars: &Vec<char>, index: usize) -> bool
@@ -182,12 +186,12 @@ fn accept_index(chars: &Vec<char>, index: usize) -> bool
 fn expect_index(
     chars: &Vec<char>,
     index: usize,
-) -> Result<(Query, usize), PqError>
+) -> Result<(Query, ConsumedChars), PqError>
 {
     let input: &String = &chars[index ..].into_iter().collect();
     let re = Regex::new(r"\[\s*(-?)\s*(\d+)\s*\]").or(Err(PqError::Query))?;
 
-    if let (Some(caps), Some(end_index)) =
+    if let (Some(caps), Some(consumed)) =
         (re.captures(input), re.shortest_match(input))
     {
         if let Some(num) = caps.get(2)
@@ -213,7 +217,7 @@ fn expect_index(
 
             println!("{YELLOW}{:?}{RESET}", re.shortest_match(input));
 
-            return Ok((Query::Index { query: number * negative }, end_index));
+            return Ok((Query::Index { query: number * negative }, consumed));
         }
     }
 
@@ -223,7 +227,7 @@ fn expect_index(
 fn expect_expression(
     chars: &Vec<char>,
     index: usize,
-) -> Result<(Query, usize), PqError>
+) -> Result<(Query, ConsumedChars), PqError>
 {
     let python_source: &String = &chars[index ..].into_iter().collect();
 
@@ -245,15 +249,15 @@ fn expect_expression(
         start += 1
     }
 
-    if let Some(end_index) = valid_index
+    if let Some(consumed) = valid_index
     {
         println!(
             "{} | INDEX: {}",
-            &python_source[0 ..= end_index],
-            start + end_index
+            &python_source[0 ..= consumed],
+            start + consumed
         );
-        let query = python_source[0 ..= end_index].to_string();
-        return Ok((Query::Expression { query }, index + end_index));
+        let query = python_source[0 ..= consumed].to_string();
+        return Ok((Query::Expression { query }, consumed + 1));
     }
 
     Err(PqError::Query)
@@ -318,6 +322,8 @@ fn process_queries(
 
     for query in queries
     {
+        println!("\n{BLUE}{json_state}{RESET}\n");
+
         match query
         {
             Query::SelectKey { key } =>
@@ -368,7 +374,9 @@ fn process_queries(
                     println!("HERE -> {result:?}");
                     let result = result?;
                     let str_expr: String = result.extract()?;
-                    println!("{str_expr}");
+
+                    json_state = serde_json::from_str(&str_expr)?;
+
                     Ok(())
                 })?
             }
@@ -378,7 +386,7 @@ fn process_queries(
         }
     }
 
-    println!("{}", json_state);
+    println!("{} <-- FINAL UPDATE", json_state);
 
     Ok(())
 }
