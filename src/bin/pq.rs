@@ -1,6 +1,7 @@
+use pyo3::prelude::*;
+use pyo3::types::IntoPyDict;
 use regex::Regex;
 use rustpython_parser::{ast, Parse};
-use std::os::unix::process;
 
 const USAGE: &str = r#"
 pq - Query JSON using a DSL that embeds Python expressions
@@ -19,6 +20,7 @@ pub enum PqError
 {
     Json(serde_json::Error),
     Query,
+    Python,
 }
 
 impl From<serde_json::Error> for PqError
@@ -26,6 +28,14 @@ impl From<serde_json::Error> for PqError
     fn from(value: serde_json::Error) -> Self
     {
         Self::Json(value)
+    }
+}
+
+impl From<PyErr> for PqError
+{
+    fn from(_: PyErr) -> Self
+    {
+        Self::Python
     }
 }
 
@@ -51,40 +61,14 @@ fn main() -> Result<(), PqError>
     Ok(())
 }
 
-fn exe_expr2()
-{
-    let python_source = "(print('Hello world')).a.()";
-
-    // let python_statements = ast::Suite::parse(python_source, "").unwrap(); // statements
-    // println!("-1-> {python_statements:?}");
-
-    let mut index = 0;
-    let mut valid_index: Option<usize> = None;
-    while index < python_source.len()
-    {
-        if ast::Expr::parse(&python_source[0 .. index], "").is_ok()
-        {
-            valid_index = Some(index);
-            break;
-        }
-
-        index += 1
-    }
-
-    if let Some(end_index) = valid_index
-    {
-        println!("{}", &python_source[0 .. end_index]);
-    }
-}
-
 #[rustfmt::skip]
 #[derive(Debug)]
 enum Query
 {
     SelectKey { key: String, },
     Index { query: isize, },
-    BuildObject { query: String, },
     Expression { query: String, },
+    BuildObject { query: String, },
     Fanout,
     Join,
     Select,
@@ -100,43 +84,58 @@ fn parse_queries(input: &str) -> Result<Vec<Query>, PqError>
 
     let mut last_index = 0;
 
+    // TODO(alvl): See if match can be reduced to returning (q, idx)
     while index < chars.len()
     {
         match chars[index]
         {
             '.' => index += 1,
             '{' => index += 1,
-            '(' => index += 1,
+            '(' =>
+            {
+                let Ok((query, end_index)) = expect_expression(&chars, index)
+                else
+                {
+                    return Err(PqError::Query);
+                };
+                queries.push(query);
+                if end_index <= index
+                {
+                    panic!("{RED}Infinite loop!{RESET}");
+                }
+                index += end_index;
+            }
             '[' =>
             {
                 if accept_index(&chars, 0)
                 {
-                    if let Ok((query, end_index)) = expect_index(&chars, index)
+                    let Ok((query, end_index)) = expect_index(&chars, index)
+                    else
                     {
-                        queries.push(query);
-                        if end_index == index
-                        {
-                            panic!("{RED}Infinite loop!{RESET}");
-                        }
-                        index += end_index;
-                    }
-                }
-            }
-            'a' ..= 'z' | 'A' ..= 'Z' | '_' =>
-            {
-                if let Ok((query, end_index)) = expect_select_key(&chars, index)
-                {
+                        return Err(PqError::Query);
+                    };
                     queries.push(query);
-                    if end_index == index
+                    if end_index <= index
                     {
                         panic!("{RED}Infinite loop!{RESET}");
                     }
                     index += end_index;
                 }
+                // TODO(alvl): else if accept...
+            }
+            'a' ..= 'z' | 'A' ..= 'Z' | '_' =>
+            {
+                let Ok((query, end_index)) = expect_select_key(&chars, index)
                 else
                 {
                     return Err(PqError::Query);
+                };
+                queries.push(query);
+                if end_index <= index
+                {
+                    panic!("{RED}Infinite loop!{RESET}");
                 }
+                index += end_index;
             }
             _ => panic!("Invalid syntax:\n{input}\n{}^", " ".repeat(index)),
         }
@@ -163,7 +162,10 @@ fn process_queries(
     {
         match query
         {
-            Query::SelectKey { key } => json_state = json_state[key].clone(),
+            Query::SelectKey { key } =>
+            {
+                json_state = json_state[key].clone();
+            }
             Query::Index { query } =>
             {
                 let key = if query < 0
@@ -174,10 +176,21 @@ fn process_queries(
                 {
                     query
                 } as usize;
-                json_state = json_state[key].clone()
+                json_state = json_state[key].clone();
             }
             Query::BuildObject { query } => todo!(),
-            Query::Expression { query } => todo!(),
+            Query::Expression { query } => Python::with_gil::<
+                _,
+                Result<(), PqError>,
+            >(|py| {
+                let line = "";
+                let locals = [("_", line)].into_py_dict_bound(py);
+                let result =
+                    py.eval_bound(&format!("{query}"), None, Some(&locals))?;
+                let str_expr: String = result.extract()?;
+                println!("{str_expr}");
+                Ok(())
+            })?,
             Query::Fanout => todo!(),
             Query::Join => todo!(),
             Query::Select => todo!(),
@@ -258,6 +271,42 @@ fn expect_index(
     Err(PqError::Query)
 }
 
+fn expect_expression(
+    chars: &Vec<char>,
+    index: usize,
+) -> Result<(Query, usize), PqError>
+{
+    let _python_source = "(print('Hello world')).a.()";
+    let python_source: &String = &chars[index ..].into_iter().collect();
+
+    // let python_statements = ast::Suite::parse(python_source, "").unwrap(); // statements
+    // println!("-1-> {python_statements:?}");
+
+    println!("{RED}{python_source}{RESET}");
+
+    let mut index = 0;
+    let mut valid_index: Option<usize> = None;
+    while index < python_source.len()
+    {
+        println!("{RED} -> {index} {} {RESET}", &python_source[..= index]);
+        if ast::Expr::parse(&python_source[..= index], "").is_ok()
+        {
+            valid_index = Some(index);
+            break;
+        }
+        index += 1
+    }
+
+    if let Some(end_index) = valid_index
+    {
+        println!("{}", &python_source[0 ..= end_index]);
+        let query = python_source[0 ..= end_index].to_string();
+        return Ok((Query::Expression { query }, index + end_index));
+    }
+
+    Err(PqError::Query)
+}
+
 fn accept_fanout(chars: &Vec<char>, index: usize) -> bool
 {
     false
@@ -269,4 +318,32 @@ fn accept_join(chars: &Vec<char>, index: usize) -> bool
 fn accept_select(chars: &Vec<char>, index: usize) -> bool
 {
     false
+}
+
+use pyo3::prelude::*;
+use pyo3::types::PyDict;
+use serde_json::{Map, Value};
+
+fn value_to_py_dict<'a>(py: Python<'a>, value: &Value) -> PyResult<&'a PyDict>
+{
+    let dict = PyDict::new_bound(py);
+
+    match value
+    {
+        Value::Object(map) =>
+        {
+            for (key, value) in map.iter()
+            {
+                dict.set_item(key, value_to_py(py, value)?)?;
+            }
+        }
+        _ =>
+        {
+            return Err(pyo3::exceptions::PyTypeError::new_err(
+                "Value must be a JSON object",
+            ))
+        }
+    }
+
+    Ok(dict)
 }
