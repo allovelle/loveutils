@@ -22,7 +22,7 @@ pub enum PqError
 {
     Json(serde_json::Error),
     Query,
-    Python,
+    Python(pyo3::PyErr),
 }
 
 #[rustfmt::skip]
@@ -34,7 +34,7 @@ impl From<serde_json::Error> for PqError
 #[rustfmt::skip]
 impl From<PyErr> for PqError
 {
-    fn from(_: PyErr) -> Self { Self::Python }
+    fn from(value: PyErr) -> Self { Self::Python(value) }
 }
 
 fn main() -> Result<(), PqError>
@@ -529,7 +529,46 @@ fn process_queries(
                             };
                             new_json_state[key] = json_state[key].clone();
                         }
-                        BuildObjectQuery::Map(..) => todo!(),
+                        BuildObjectQuery::Map(expr_key, expr_val) =>
+                        {
+                            match expr_key
+                            {
+                                Query::SelectKey { key } =>
+                                {
+                                    let the_key = json_state[key].clone();
+                                    let Some(result_key) = the_key.as_str()
+                                    else
+                                    {
+                                        return Err(PqError::Query);
+                                    };
+                                    match expr_val
+                                    {
+                                        Query::SelectKey { key: val_key } =>
+                                        {
+                                            // let k = json_state[key].clone();
+                                            let v = json_state[val_key].clone();
+                                            new_json_state[result_key] = v;
+                                        }
+                                        Query::Expression {
+                                            query: val_query,
+                                        } => (),
+                                        _ => return Err(PqError::Query),
+                                    }
+                                }
+                                Query::Expression { query: key } =>
+                                {
+                                    match expr_val
+                                    {
+                                        Query::SelectKey { key: val_key } => (),
+                                        Query::Expression {
+                                            query: val_query,
+                                        } => (),
+                                        _ => return Err(PqError::Query),
+                                    }
+                                }
+                                _ => return Err(PqError::Query),
+                            }
+                        }
                     }
                 }
                 json_state = new_json_state;
