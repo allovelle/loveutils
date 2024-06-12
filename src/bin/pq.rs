@@ -25,20 +25,16 @@ pub enum PqError
     Python,
 }
 
+#[rustfmt::skip]
 impl From<serde_json::Error> for PqError
 {
-    fn from(value: serde_json::Error) -> Self
-    {
-        Self::Json(value)
-    }
+    fn from(value: serde_json::Error) -> Self { Self::Json(value) }
 }
 
+#[rustfmt::skip]
 impl From<PyErr> for PqError
 {
-    fn from(_: PyErr) -> Self
-    {
-        Self::Python
-    }
+    fn from(_: PyErr) -> Self { Self::Python }
 }
 
 fn main() -> Result<(), PqError>
@@ -54,7 +50,7 @@ fn main() -> Result<(), PqError>
         Some(query) =>
         {
             let queries = parse_queries(&query).or(Err(PqError::Query))?;
-            println!("{GREEN}{queries:?}{RESET}");
+            println!("{GREEN} Queries: {queries:?}{RESET}");
             process_queries(json, queries)?;
         }
         _ => println!("{}", USAGE.trim()),
@@ -70,7 +66,7 @@ enum Query
     SelectKey { key: String, },
     Index { query: isize, },
     Expression { query: String, },
-    BuildObject { query: String, },
+    BuildObject { query: Vec<Query>, },
     Fanout,
     Join,
     Select,
@@ -92,7 +88,21 @@ fn parse_queries(input: &str) -> Result<Vec<Query>, PqError>
         match chars[index]
         {
             '.' => index += 1,
-            '{' => index += 1,
+            '{' =>
+            {
+                // TODO(alvl): Convert exprs to JSON, convert key names to str
+                let Ok((query, consumed)) = expect_build_object(&chars, index)
+                else
+                {
+                    return Err(PqError::Query);
+                };
+                queries.push(query);
+                if consumed <= 0
+                {
+                    panic!("{RED}Infinite loop!{RESET}");
+                }
+                index += consumed;
+            }
             '(' =>
             {
                 println!("    EXPR");
@@ -154,8 +164,76 @@ fn parse_queries(input: &str) -> Result<Vec<Query>, PqError>
     Ok(queries)
 }
 
+fn expect_build_object(
+    chars: &[char],
+    index: usize,
+) -> Result<(Query, ConsumedChars), PqError>
+{
+    let input: &String = &chars[index ..].into_iter().collect();
+    let mut start = 0;
+    let mut queries = vec![];
+
+    while start < chars.len()
+    {
+        match chars[start]
+        {
+            '{' | ',' => start += 1,
+            '}' => break,
+            '"' =>
+            {
+                println!("    EXPR");
+                let Ok((query, consumed)) = expect_string(chars, start)
+                else
+                {
+                    return Err(PqError::Query);
+                };
+                queries.push(query);
+                if consumed <= 0
+                {
+                    panic!("{RED}Infinite loop!{RESET}");
+                }
+                start += consumed;
+            }
+            '(' =>
+            {
+                println!("    EXPR");
+                let Ok((query, consumed)) = expect_expression(chars, start)
+                else
+                {
+                    return Err(PqError::Query);
+                };
+                queries.push(query);
+                if consumed <= 0
+                {
+                    panic!("{RED}Infinite loop!{RESET}");
+                }
+                start += consumed;
+            }
+            'a' ..= 'z' | 'A' ..= 'Z' | '_' =>
+            {
+                let Ok((query, consumed)) = expect_select_key(chars, start)
+                else
+                {
+                    return Err(PqError::Query);
+                };
+                queries.push(query);
+                if consumed <= 0
+                {
+                    panic!("{RED}Infinite loop!{RESET}");
+                }
+                start += consumed;
+            }
+            _ => panic!("Invalid syntax:\n{input}\n{}^", " ".repeat(start)),
+        }
+    }
+
+    println!("Queries :: {queries:?}");
+
+    Err(PqError::Query)
+}
+
 fn expect_select_key(
-    chars: &Vec<char>,
+    chars: &[char],
     index: usize,
 ) -> Result<(Query, ConsumedChars), PqError>
 {
@@ -224,18 +302,41 @@ fn expect_index(
     Err(PqError::Query)
 }
 
-fn expect_expression(
-    chars: &Vec<char>,
+fn expect_string(
+    chars: &[char],
     index: usize,
 ) -> Result<(Query, ConsumedChars), PqError>
 {
     let python_source: &String = &chars[index ..].into_iter().collect();
+    let mut start = 0;
+    let mut valid_index: Option<usize> = None;
+    while start < python_source.len()
+    {
+        println!("{RED} -> {start} {} {RESET}", &python_source[..= start]);
+        if ast::Expr::parse(&python_source[..= start], "").is_ok()
+        {
+            valid_index = Some(start);
+            break;
+        }
+        start += 1
+    }
 
-    // let python_statements = ast::Suite::parse(python_source, "").unwrap(); // statements
-    // println!("-1-> {python_statements:?}");
+    if let Some(consumed) = valid_index
+    {
+        let query = format!("({})", &python_source[0 ..= consumed]);
+        println!("{} | INDEX: {}", &query, start + consumed);
+        return Ok((Query::Expression { query }, consumed + 1));
+    }
 
-    println!("{RED}{python_source}{RESET}");
+    Err(PqError::Query)
+}
 
+fn expect_expression(
+    chars: &[char],
+    index: usize,
+) -> Result<(Query, ConsumedChars), PqError>
+{
+    let python_source: &String = &chars[index ..].into_iter().collect();
     let mut start = 0;
     let mut valid_index: Option<usize> = None;
     while start < python_source.len()
@@ -263,15 +364,15 @@ fn expect_expression(
     Err(PqError::Query)
 }
 
-fn accept_fanout(chars: &Vec<char>, index: usize) -> bool
+fn accept_fanout(chars: &[char], index: usize) -> bool
 {
     false
 }
-fn accept_join(chars: &Vec<char>, index: usize) -> bool
+fn accept_join(chars: &[char], index: usize) -> bool
 {
     false
 }
-fn accept_select(chars: &Vec<char>, index: usize) -> bool
+fn accept_select(chars: &[char], index: usize) -> bool
 {
     false
 }
@@ -322,7 +423,7 @@ fn process_queries(
 
     for query in queries
     {
-        println!("\n{BLUE}{json_state}{RESET}\n");
+        println!("    {BLUE}{json_state}{RESET}");
 
         match query
         {
@@ -346,11 +447,6 @@ fn process_queries(
             Query::Expression { query } =>
             {
                 Python::with_gil::<_, Result<(), PqError>>(|py| {
-                    println!(
-                        "{RED}{}{RESET}",
-                        format!("(_ := {json_state});{query}")
-                    );
-
                     let locals = [("json", py.import_bound("json")?)]
                         .into_py_dict_bound(py);
 
@@ -366,12 +462,6 @@ fn process_queries(
                             Some(&locals),
                         ));
 
-                    // let result = py.eval_bound(
-                    //     &format!("(_ := {json_state});{query}"),
-                    //     None,
-                    //     None,
-                    // );
-                    println!("HERE -> {result:?}");
                     let result = result?;
                     let str_expr: String = result.extract()?;
 
