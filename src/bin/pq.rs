@@ -66,10 +66,18 @@ enum Query
     SelectKey { key: String, },
     Index { query: isize, },
     Expression { query: String, },
-    BuildObject { query: Vec<Query>, },
+    BuildObject { query: Vec<BuildObjectQuery>, },
     Fanout,
     Join,
     Select,
+}
+
+#[rustfmt::skip]
+#[derive(Debug)]
+enum BuildObjectQuery
+{
+    Select(Query),
+    Map(Query, Query),
 }
 
 fn parse_queries(input: &str) -> Result<Vec<Query>, PqError>
@@ -169,25 +177,86 @@ fn expect_build_object(
     index: usize,
 ) -> Result<(Query, ConsumedChars), PqError>
 {
+    #[rustfmt::skip]
+    enum State { Select, Map }
+
     let input: &String = &chars[index ..].into_iter().collect();
-    let mut start = 0;
-    let mut queries = vec![];
+    let mut start = 1; // Skip initial `{`
+    let mut stack = vec![];
+    let mut result = vec![];
+
+    let mut state = State::Select; // Refers to what happens at `,` or `}`
 
     while start < chars.len()
     {
         match chars[start]
         {
-            '{' | ',' => start += 1,
-            '}' => break,
+            '}' =>
+            {
+                println!("  <END");
+                start += 1;
+                match state  // TODO(alvl): Danger, same as below
+                {
+                    State::Select =>
+                    {
+                        let key = stack.pop().unwrap();
+                        if !matches!(key, Query::SelectKey { .. }) {
+                            return Err(PqError::Query);
+                        }
+                        result.push(BuildObjectQuery::Select(key));
+                    }
+                    State::Map =>
+                    {
+                        let key = stack.pop().unwrap();
+                        let value = stack.pop().unwrap();
+                        result.push(BuildObjectQuery::Map(key, value));
+                    }
+                }
+                break;
+            }
+            ',' =>
+            {
+                println!("  <COMMA");
+                assert!(
+                    stack.len() < 2,
+                    "Invalid syntax:\n{input}\n{}^",
+                    " ".repeat(start)
+                );
+                start += 1;
+                match state  // TODO(alvl): Danger, same as above
+                {
+                    State::Select =>
+                    {
+                        let key = stack.pop().unwrap();
+                        if !matches!(key, Query::SelectKey { .. }) {
+                            return Err(PqError::Query);
+                        }
+                        result.push(BuildObjectQuery::Select(key));
+                    }
+                    State::Map =>
+                    {
+                        let value = stack.pop().unwrap();
+                        let key = stack.pop().unwrap();
+                        result.push(BuildObjectQuery::Map(key, value));
+                    }
+                }
+                state = State::Select;
+            }
+            ':' =>
+            {
+                println!("  <COLON");
+                start += 1;
+                state = State::Map;
+            }
             '"' =>
             {
-                println!("    EXPR");
+                println!("  <STRING");
                 let Ok((query, consumed)) = expect_string(chars, start)
                 else
                 {
                     return Err(PqError::Query);
                 };
-                queries.push(query);
+                stack.push(query);
                 if consumed <= 0
                 {
                     panic!("{RED}Infinite loop!{RESET}");
@@ -196,13 +265,13 @@ fn expect_build_object(
             }
             '(' =>
             {
-                println!("    EXPR");
+                println!("  <EXPR");
                 let Ok((query, consumed)) = expect_expression(chars, start)
                 else
                 {
                     return Err(PqError::Query);
                 };
-                queries.push(query);
+                stack.push(query);
                 if consumed <= 0
                 {
                     panic!("{RED}Infinite loop!{RESET}");
@@ -211,12 +280,13 @@ fn expect_build_object(
             }
             'a' ..= 'z' | 'A' ..= 'Z' | '_' =>
             {
+                println!("  <SELECT");
                 let Ok((query, consumed)) = expect_select_key(chars, start)
                 else
                 {
                     return Err(PqError::Query);
                 };
-                queries.push(query);
+                stack.push(query);
                 if consumed <= 0
                 {
                     panic!("{RED}Infinite loop!{RESET}");
@@ -227,9 +297,9 @@ fn expect_build_object(
         }
     }
 
-    println!("Queries :: {queries:?}");
+    println!("Queries :: {result:?}");
 
-    Err(PqError::Query)
+    Ok((Query::BuildObject { query: result }, start))
 }
 
 fn expect_select_key(
@@ -443,7 +513,27 @@ fn process_queries(
                 } as usize;
                 json_state = json_state[key].clone();
             }
-            Query::BuildObject { query } => todo!(),
+            Query::BuildObject { query } =>
+            {
+                let mut new_json_state = serde_json::json!({});
+                for sub in query.iter()
+                {
+                    match sub
+                    {
+                        BuildObjectQuery::Select(select) =>
+                        {
+                            let Query::SelectKey { key } = select
+                            else
+                            {
+                                return Err(PqError::Query);
+                            };
+                            new_json_state[key] = json_state[key].clone();
+                        }
+                        BuildObjectQuery::Map(..) => todo!(),
+                    }
+                }
+                json_state = new_json_state;
+            }
             Query::Expression { query } =>
             {
                 Python::with_gil::<_, Result<(), PqError>>(|py| {
