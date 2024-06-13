@@ -550,6 +550,7 @@ fn process_queries(
                                             new_json_state[result_key] = v;
                                         }
                                         Query::Expression {
+                                            // TODO(alvl): Run value Python query
                                             query: val_query,
                                         } => (),
                                         _ => return Err(PqError::Query),
@@ -557,9 +558,19 @@ fn process_queries(
                                 }
                                 Query::Expression { query: key } =>
                                 {
+                                    // TODO(alvl): Run both the key & value Python queries
+                                    {
+                                        // TODO(alvl): For all keys, add them as locals
+                                    }
+                                    let result_key = ""; // TODO(alvl): Run Py
+
                                     match expr_val
                                     {
-                                        Query::SelectKey { key: val_key } => (),
+                                        Query::SelectKey { key: val_key } =>
+                                        {
+                                            let v = json_state[val_key].clone();
+                                            new_json_state[result_key] = v;
+                                        }
                                         Query::Expression {
                                             query: val_query,
                                         } => (),
