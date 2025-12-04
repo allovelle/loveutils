@@ -1,4 +1,4 @@
-///! Skip the first N lines of STDIN
+//! Skip the first N lines of STDIN
 
 const USAGE: &str = r#"
 skip - Skip a number of lines from STDIN
@@ -8,7 +8,7 @@ Example: ps | skip 1
 
 fn main()
 {
-    match std::env::args().skip(1).next().map(|s| s.parse())
+    match std::env::args().nth(1).map(|s| s.parse())
     {
         Some(Ok(arg)) =>
         {

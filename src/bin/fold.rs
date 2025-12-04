@@ -1,4 +1,5 @@
-use pyo3::ffi::{PyEval_GetGlobals, PyModule_GetDict};
+#![allow(clippy::unit_arg)]
+
 use pyo3::prelude::*;
 use pyo3::types::IntoPyDict;
 
@@ -18,10 +19,10 @@ fn main() -> PyResult<()>
     {
         [init, cmd] => Python::with_gil(|py| {
             let locals = [("_", "")].into_py_dict_bound(py);
-            let acc =
+            let _acc =
                 py.eval_bound(&format!("({init})"), None, Some(&locals))?;
 
-            for line in std::io::stdin().lines().flatten()
+            for line in std::io::stdin().lines().map_while(Result::ok)
             {
                 locals.set_item("_", &line)?;
                 let result =

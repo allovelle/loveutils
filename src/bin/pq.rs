@@ -45,7 +45,7 @@ fn main() -> Result<(), PqError>
     let json: serde_json::Value = serde_json::from_reader(stdin)?;
     println!("{YELLOW}{json}{RESET}");
 
-    match std::env::args().skip(1).next()
+    match std::env::args().nth(1)
     {
         Some(query) =>
         {
@@ -67,9 +67,9 @@ enum Query
     Index { query: isize, },
     Expression { query: String, },
     BuildObject { query: Vec<BuildObjectQuery>, },
-    Fanout,
-    Join,
-    Select,
+    _Fanout,
+    _Join,
+    _Select,
 }
 
 #[rustfmt::skip]
@@ -105,7 +105,7 @@ fn parse_queries(input: &str) -> Result<Vec<Query>, PqError>
                     return Err(PqError::Query);
                 };
                 queries.push(query);
-                if consumed <= 0
+                if consumed == 0
                 {
                     panic!("{RED}Infinite loop!{RESET}");
                 }
@@ -120,7 +120,7 @@ fn parse_queries(input: &str) -> Result<Vec<Query>, PqError>
                     return Err(PqError::Query);
                 };
                 queries.push(query);
-                if consumed <= 0
+                if consumed == 0
                 {
                     panic!("{RED}Infinite loop!{RESET}");
                 }
@@ -136,7 +136,7 @@ fn parse_queries(input: &str) -> Result<Vec<Query>, PqError>
                         return Err(PqError::Query);
                     };
                     queries.push(query);
-                    if consumed <= 0
+                    if consumed == 0
                     {
                         panic!("{RED}Infinite loop!{RESET}");
                     }
@@ -152,7 +152,7 @@ fn parse_queries(input: &str) -> Result<Vec<Query>, PqError>
                     return Err(PqError::Query);
                 };
                 queries.push(query);
-                if consumed <= 0
+                if consumed == 0
                 {
                     panic!("{RED}Infinite loop!{RESET}");
                 }
@@ -180,7 +180,7 @@ fn expect_build_object(
     #[rustfmt::skip]
     enum State { Select, Map }
 
-    let input: &String = &chars[index ..].into_iter().collect();
+    let input: &String = &chars[index ..].iter().collect();
     let mut start = 1; // Skip initial `{`
     let mut stack = vec![];
     let mut result = vec![];
@@ -257,7 +257,7 @@ fn expect_build_object(
                     return Err(PqError::Query);
                 };
                 stack.push(query);
-                if consumed <= 0
+                if consumed == 0
                 {
                     panic!("{RED}Infinite loop!{RESET}");
                 }
@@ -272,7 +272,7 @@ fn expect_build_object(
                     return Err(PqError::Query);
                 };
                 stack.push(query);
-                if consumed <= 0
+                if consumed == 0
                 {
                     panic!("{RED}Infinite loop!{RESET}");
                 }
@@ -287,7 +287,7 @@ fn expect_build_object(
                     return Err(PqError::Query);
                 };
                 stack.push(query);
-                if consumed <= 0
+                if consumed == 0
                 {
                     panic!("{RED}Infinite loop!{RESET}");
                 }
@@ -319,24 +319,24 @@ fn expect_select_key(
         end += 1;
     }
 
-    let key: String = chars[index .. end].into_iter().collect();
+    let key: String = chars[index .. end].iter().collect();
     let consumed = end - index;
     Ok((Query::SelectKey { key }, consumed))
 }
 
-fn accept_index(chars: &Vec<char>, index: usize) -> bool
+fn accept_index(chars: &[char], index: usize) -> bool
 {
-    let input: String = chars[index ..].into_iter().collect();
+    let input: String = chars[index ..].iter().collect();
     let re = Regex::new(r"\[\s*(-?)\s*(\d+)\s*\]").unwrap();
     re.is_match(&input)
 }
 
 fn expect_index(
-    chars: &Vec<char>,
+    chars: &[char],
     index: usize,
 ) -> Result<(Query, ConsumedChars), PqError>
 {
-    let input: &String = &chars[index ..].into_iter().collect();
+    let input: &String = &chars[index ..].iter().collect();
     let re = Regex::new(r"\[\s*(-?)\s*(\d+)\s*\]").or(Err(PqError::Query))?;
 
     if let (Some(caps), Some(consumed)) =
@@ -377,7 +377,7 @@ fn expect_string(
     index: usize,
 ) -> Result<(Query, ConsumedChars), PqError>
 {
-    let python_source: &String = &chars[index ..].into_iter().collect();
+    let python_source: &String = &chars[index ..].iter().collect();
     let mut start = 0;
     let mut valid_index: Option<usize> = None;
     while start < python_source.len()
@@ -406,7 +406,7 @@ fn expect_expression(
     index: usize,
 ) -> Result<(Query, ConsumedChars), PqError>
 {
-    let python_source: &String = &chars[index ..].into_iter().collect();
+    let python_source: &String = &chars[index ..].iter().collect();
     let mut start = 0;
     let mut valid_index: Option<usize> = None;
     while start < python_source.len()
@@ -434,15 +434,17 @@ fn expect_expression(
     Err(PqError::Query)
 }
 
-fn accept_fanout(chars: &[char], index: usize) -> bool
+fn _accept_fanout(_chars: &[char], _index: usize) -> bool
 {
     false
 }
-fn accept_join(chars: &[char], index: usize) -> bool
+
+fn _accept_join(_chars: &[char], _index: usize) -> bool
 {
     false
 }
-fn accept_select(chars: &[char], index: usize) -> bool
+
+fn _accept_select(_chars: &[char], _index: usize) -> bool
 {
     false
 }
@@ -551,12 +553,12 @@ fn process_queries(
                                         }
                                         Query::Expression {
                                             // TODO(alvl): Run value Python query
-                                            query: val_query,
+                                            query: _val_query,
                                         } => (),
                                         _ => return Err(PqError::Query),
                                     }
                                 }
-                                Query::Expression { query: key } =>
+                                Query::Expression { query: _key } =>
                                 {
                                     // TODO(alvl): Run both the key & value Python queries
                                     {
@@ -572,7 +574,7 @@ fn process_queries(
                                             new_json_state[result_key] = v;
                                         }
                                         Query::Expression {
-                                            query: val_query,
+                                            query: _val_query,
                                         } => (),
                                         _ => return Err(PqError::Query),
                                     }
@@ -610,9 +612,9 @@ fn process_queries(
                     Ok(())
                 })?
             }
-            Query::Fanout => todo!(),
-            Query::Join => todo!(),
-            Query::Select => todo!(),
+            Query::_Fanout => todo!(),
+            Query::_Join => todo!(),
+            Query::_Select => todo!(),
         }
     }
 

@@ -1,3 +1,4 @@
+#![allow(clippy::unit_arg)]
 use pyo3::prelude::*;
 use pyo3::types::IntoPyDict;
 
@@ -9,10 +10,10 @@ Example: git -h | filter 'int(_) > 77'
 
 fn main() -> PyResult<()>
 {
-    match std::env::args().skip(1).next()
+    match std::env::args().nth(1)
     {
         Some(cmd) => Python::with_gil(|py| {
-            for line in std::io::stdin().lines().flatten()
+            for line in std::io::stdin().lines().map_while(Result::ok)
             {
                 let locals = [("_", &line)].into_py_dict_bound(py);
                 let result = py.eval_bound(
