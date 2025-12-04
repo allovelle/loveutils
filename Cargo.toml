@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+pom = "3.4.0"
 pyo3 = { version = "0.21.2", features = ["auto-initialize"] }
 regex = "1.10.5"
 rustpython-parser = "0.3.1"
