@@ -74,24 +74,36 @@ impl PipelineInvocation
         let stdin_piped = !std::io::stdin().is_terminal();
         let stdout_piped = !std::io::stdout().is_terminal();
 
-        if !stdin_piped && stdout_piped
+        let stdin = std::io::stdin();
+        let stdout = std::io::stdout();
+
+        // if !stdin_piped && stdout_piped
+        // {
+        //     // First in pipe: SELF | A0 | B0
+        //     PipelineInvocation::PipeOut(std::io::stdout())
+        // }
+        // else if stdin_piped && stdout_piped
+        // {
+        //     // Middle in pipe: A0 | SELF | B0
+        //     PipelineInvocation::PipeInOut(std::io::stdin(), std::io::stdout())
+        // }
+        // else if stdin_piped && !stdout_piped
+        // {
+        //     // Last in pipe: A0 | B0 | SELF
+        //     PipelineInvocation::PipeIn(std::io::stdin())
+        // }
+        // else
+        // {
+        //     PipelineInvocation::NoPipe
+        // }
+
+        // ? More efficient, more clear? Truth table?
+        match (stdin_piped, stdout_piped)
         {
-            // First in pipe: SELF | A0 | B0
-            PipelineInvocation::PipeOut(std::io::stdout())
-        }
-        else if stdin_piped && stdout_piped
-        {
-            // Middle in pipe: A0 | SELF | B0
-            PipelineInvocation::PipeInOut(std::io::stdin(), std::io::stdout())
-        }
-        else if stdin_piped && !stdout_piped
-        {
-            // Last in pipe: A0 | B0 | SELF
-            PipelineInvocation::PipeIn(std::io::stdin())
-        }
-        else
-        {
-            PipelineInvocation::NoPipe
+            (false, true) => PipelineInvocation::PipeOut(stdout),
+            (true, true) => PipelineInvocation::PipeInOut(stdin, stdout),
+            (true, false) => PipelineInvocation::PipeIn(stdin),
+            (false, false) => PipelineInvocation::NoPipe,
         }
     }
 }
