@@ -1,17 +1,19 @@
-// - typed "some input"
-// 	write cli input to stderr to show it
-// - typed "some input" | typed
-// 	write stdin to stderr to show it
-// - typed "some input" | typed
-// 	prints stdin to stdout
-// - typed "some input" | typed | typed
-// 	read stdin
-// 	write stdin to stderr to show it
-// 	write stdin to stdout to move it
-// 	read stdin
-// 	write stdin to stderr to show it
+use std::io::{self, IsTerminal, Stdin, Stdout, Write};
 
-use std::io::{IsTerminal, Stdin, Stdout};
+pub enum PlacementDescriptor
+{
+    /// First in pipe writes to stdout
+    First(Stdout),
+
+    /// Middle in pipe reads from stdin and writes to stdout
+    Middle(Stdin, Stdout),
+
+    /// Last in pipe reads from stdin
+    Last(Stdout),
+
+    /// Standalone writes to stdout usually
+    Alone(Stdout),
+}
 
 pub enum PipelineInvocation
 {
@@ -28,10 +30,45 @@ pub enum PipelineInvocation
     NoPipe,
 }
 
-// read-from write-to
+impl From<PlacementDescriptor> for PipelineInvocation
+{
+    fn from(placement: PlacementDescriptor) -> Self
+    {
+        use PlacementDescriptor::*;
+
+        match placement
+        {
+            First(stdout) => Self::PipeOut(stdout),
+            Middle(stdin, stdout) => Self::PipeInOut(stdin, stdout),
+            Last(..) => Self::PipeIn(std::io::stdin()),
+            Alone(..) => Self::NoPipe,
+        }
+    }
+}
+
+impl From<PipelineInvocation> for PlacementDescriptor
+{
+    fn from(placement: PipelineInvocation) -> Self
+    {
+        use PipelineInvocation::*;
+
+        match placement
+        {
+            PipeIn(..) => Self::Last(std::io::stdout()),
+            PipeOut(stdout) => Self::First(stdout),
+            PipeInOut(stdin, stdout) => Self::Middle(stdin, stdout),
+            NoPipe => Self::Alone(std::io::stdout()),
+        }
+    }
+}
 
 impl PipelineInvocation
 {
+    pub fn placement(&self) -> PlacementDescriptor
+    {
+        panic!();
+    }
+
     pub fn get() -> Self
     {
         let stdin_piped = !std::io::stdin().is_terminal();
@@ -76,5 +113,5 @@ impl std::fmt::Debug for PipelineInvocation
 /// Test program for typed pipes
 fn main()
 {
-    println!("Invoked within pipeline:\n    {:?}", PipelineInvocation::get());
+    eprintln!("Invoked within pipeline:\n    {:?}", PipelineInvocation::get());
 }
